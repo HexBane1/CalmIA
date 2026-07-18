@@ -1,0 +1,46 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Model artifacts (large binaries, should not be versioned) ---
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# --- Generated output (regeneratable, not source) ---
+generated_songs/
+*.mid
+*.midi
+*.wav
+
+# --- Robert's dataset (raw data, keep out of version control) ---
+data/
+datasets/
+roberts_dataset/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- OS / editor clutter ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# --- Logs ---
+*.log
+logs/
