@@ -53,11 +53,16 @@ class MusicSequenceDataset(Dataset):
                 f"layout differs."
             )
         valid_extensions = (".pt", ".mid", ".midi")
-        return sorted(
-            os.path.join(split_dir, fname)
-            for fname in os.listdir(split_dir)
-            if fname.lower().endswith(valid_extensions)
-        )
+        # Recurse into subfolders (e.g. train/ambient/, train/classical/, ...)
+        # so genre-labeled subdirectories are picked up automatically. Genre is
+        # not used as a training signal in the Week 1 baseline -- it is purely
+        # a folder-organization convenience at this stage.
+        file_paths = []
+        for current_dir, _subdirs, filenames in os.walk(split_dir):
+            for fname in filenames:
+                if fname.lower().endswith(valid_extensions):
+                    file_paths.append(os.path.join(current_dir, fname))
+        return sorted(file_paths)
 
     def __len__(self) -> int:
         return len(self.file_paths)
