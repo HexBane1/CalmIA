@@ -2,141 +2,101 @@
 
 ## Status Summary (read this first)
 
-**Where things stand:** the Week 1 baseline is functionally complete and pushed to
-GitHub. Here's the play-by-play so we're both on the same page:
+**Where things stand:** the Week 1 baseline and initial data pipelines are complete and pushed to GitHub. Here is the summary of what has been implemented:
 
-- Built the full codebase split around a shared contract (`shared/config.py`,
-  `shared/vocabulary.py`) so we can work in parallel without blocking each other —
-  see "Parallelization Contract" below for exactly how that's meant to work.
-- Wired in our actual dataset: 5 genre folders (`ambient`, `classical`, `jazz`, `pop`,
-  `soundtracks`), each a flat folder of raw `.mid` files. `split_dataset.py` (new,
-  in the repo root) takes that layout and produces a stratified 90/10 train/val split
-  per genre into `data/new_dataset/`. `dataset.py` recurses into genre subfolders
-  automatically, so genre is just a folder-organization convenience right now — it is
-  **not** used as a conditioning signal in this baseline.
-- Trained the baseline Transformer (`developer_a/model.py`) for 20 epochs on the real
-  dataset. Best checkpoint by validation loss is saved as `checkpoints/checkpoint_best.pt`
-  and is in the repo.
-- Generated our first batch of songs (`developer_b/generate_song.py`) —
-  `generated_songs/baseline_song_01.mid` through `_05.mid`, also in the repo.
-- **Honest quality check:** the 5 generated songs are rough — closer to noise than
-  music. This is expected, not a bug: a ~3.3M-parameter model trained for 20 epochs on
-  a genre-mixed dataset this size was never going to produce something polished. The
-  point of this checkpoint was proving the pipeline works end-to-end (data in, model
-  trains, music comes out), which it now does. Quality is the next lever to pull, not
-  something that needed fixing before this deadline.
+- Built the codebase split around a shared contract (`shared/config.py`, `shared/vocabulary.py`) for parallel development.
+- Initial multi-genre baseline: Trained on 5 genres (`ambient`, `classical`, `jazz`, `pop`, `soundtracks`) using `split_dataset.py` to produce `data/new_dataset/`. Generated baseline songs are in `generated_songs/`.
+- Classical baseline: Curated a single-genre classical dataset (`classical_dataset/`) split into `data/classical_split/` to reduce genre-confusion. Retrained the model and generated the classical baseline batch in `generated_songs_classical/`.
+- Model checkpoints: Best weights are tracked in `checkpoints/checkpoint_best.pt`.
+- Reference review: Completed the 10 Kaggle reference notebook analysis (`kaggle_analysis.xlsx`).
+- Physiological data pipeline: Verified WESAD file integrity (`check_wesad.py`) and verified extraction of Heart Rate, HRV (SDNN), and EDA (Skin Conductance Level) metrics (`extract_features.py`).
 
-**What's actually left before we move on:**
-1. **The 10 Kaggle notebook analysis** (see Section 1 below) — this hasn't been
-   started yet and is the other explicit "until next time" deliverable. Let's split
-   5 notebooks each.
-2. Everything else in this README (novel architecture, physiological conditioning,
-   Safe RL controller, the full RCT evaluation suite) is final-report / later-weeks
-   scope per the professor's requirements doc — **not** due now, so don't feel
-   pressure to start on that yet.
+## Collaborator Setup & Requirements
 
-If we want to improve generation quality later (lower temperature at sampling time,
-train longer, or split training per-genre instead of pooling all 5 together), that's
-a cheap, optional next step — not a blocker for this checkpoint.
+**1. Local Environment & Dependencies**
+Model checkpoints and datasets are intentionally excluded from version control to save space. To set up your local environment:
+* Pull the latest changes from the `main` branch.
+* Install required physiological processing libraries: `pip install -r requirements.txt`
+
+**2. Downloading the Datasets**
+You must download the datasets locally and place them in the project root.
+
+*   **WESAD Dataset (~3GB):**
+    1. Download from [here:](https://www.kaggle.com/datasets/orvile/wesad-wearable-stress-affect-detection-dataset).
+    2. Extract the contents into a folder named `wesad_data/` in the project root. 
+    3. Verify the file path matches this format: `wesad_data/S2/S2.pkl`.
+
+*   **Classical MIDI Dataset:**
+    1. Download from [here:](https://www.kaggle.com/datasets/soumikrakshit/classical-music-midi).
+    2. Extract the MIDI files into a folder named `classical_dataset/` in the project root.
+
+**3. Generating the Train/Val Split**
+Do not manually split the MIDI files. Generate the local splits by running the preprocessing script:
+`python split_dataset.py --source_root classical_dataset --output_root data/classical_split --val_fraction 0.1`
+
+**4. Assigned Task: Real-Time Windowing & Target Mapping**
+The current `extract_features.py` script extracts static HRV and EDA metrics from the raw WESAD data. Your task is to convert this into a continuous, simulated real-time dataset to serve as the environment for the Reinforcement Learning controller.
+
+**Action Items:**
+* **Time-Windowing:** Update `extract_features.py` to iterate through the data in 10-second rolling windows rather than processing the entire condition block at once.
+* **Multi-State Extraction:** Extract features for the Baseline (Label 1), Stress (Label 2), and Meditation (Label 4) conditions.
+* **Rule-Based Mapper:** Create a function `calculate_music_targets(hrv, eda)` that applies our safety constraints to map physiological states to musical targets (e.g., high EDA/low HRV outputs a lower target tempo and complexity).
+* **Data Export:** Save the windowed results to a CSV file (e.g., `S2_physiological_timeline.csv`) containing the following columns: `[Timestamp, Condition_Label, HRV_SDNN, Mean_EDA, Target_Tempo, Target_Complexity]`.
 
 ---
 
-This package covers the three Week 1 objectives:
+## Project Completion Roadmap & Technical Requirements
 
-1. A structured framework for analyzing the 10 Kaggle reference notebooks.
-2. Developer A's work package: data pipeline + baseline training routine.
-3. Developer B's work package: inference, sampling, and MIDI synthesis.
+The following phases outline the remaining deliverables required for the final research prototype and evaluation suite:
 
-The codebase is deliberately split around a **shared contract** (`shared/config.py` and
-`shared/vocabulary.py`). Both developers import from this contract only — neither imports
-from the other's package directly. This is what allows fully parallel work:
+### Phase 1: Conditioning & Feature Ingestion
+* **Multimodal Integration:** Ingest extracted windowed features (HRV, EDA, Respiration) alongside tokenized MIDI sequences.
+* **Conditioning Mechanism:** Implement feature injection into the generative model (e.g., prepended condition tokens, concatenated embeddings, or cross-attention layers).
 
-- Developer A can change model internals freely as long as the checkpoint format
-  (defined in `shared/config.py`) stays fixed.
-- Developer B can build and unit-test the entire inference/sampling/synthesis pipeline
-  today, against a randomly initialized model, without waiting for a trained checkpoint.
+### Phase 2: Safe Reinforcement Learning Controller
+* **Environment Modeling:** Construct a gym-style environment where state represents patient physiological indicators and action space controls musical levers (tempo delta, harmonic tension, rhythmic complexity).
+* **Safety Constraints:** Implement hard action bounds and rate limiters to prevent abrupt musical shifts, excessive volume spikes, or destabilizing patterns.
+* **Reward Function:** Formulate an optimization objective focused on stress reduction and physiological stabilization.
+
+### Phase 3: Benchmark Studies (5-Arm Comparison)
+Conduct comparative evaluations across the required baseline conditions:
+1. Silence / No music
+2. Fixed static music
+3. Therapist-selected music
+4. Non-adaptive generative AI music (unconditioned baseline)
+5. Closed-loop adaptive AI music (our conditioned model + safe RL)
+
+### Phase 4: Robustness & Systems Evaluation
+* **Fault Tolerance:** Test model behavior under sensor noise, missing data packets, and simulated sensor disconnects.
+* **Systems Profiling:** Measure inference latency, memory consumption, and real-time generation throughput.
+* **Statistical Rigor:** Run multi-seed experiments with confidence intervals and statistical significance testing.
+
+### Phase 5: Qualitative, Ethical, and Usability Analysis
+* **User & Subject Evaluation:** Assess listener adherence, fatigue levels, and usability metrics.
+* **Analysis & Reporting:** Document model explainability, sensor data privacy considerations, and calibration results.
 
 ---
 
 ## 1. Kaggle Notebook Analysis Framework
 
-**Status: not started — this is the open item.**
+**Status: Completed (see `kaggle_analysis.xlsx`).**
 
-Apply this 5-point rubric identically to all 10 notebooks. Time-box each notebook to
-30–40 minutes. The goal is pattern extraction, not reproduction — you are mining for
-decisions you can reuse or explicitly reject, with a reason.
+The 5-point rubric applied across the 10 reference notebooks:
 
 ### Point 1 — Data Representation / Tokenization Strategy
-Identify which of these each notebook uses, and note the trade-off it implies for your
-physiological-conditioning use case (you need fine-grained, low-latency control over
-tempo and tension, which some representations support poorly):
-
-- **Raw audio (waveform / spectrogram)**: high fidelity, expensive, poor direct control
-  over discrete musical parameters like tempo or harmonic tension.
-- **Piano-roll matrices** (fixed time-step x pitch grid): simple, fixed quantization,
-  good for CNN/RNN baselines, weak on dynamics/velocity and long-range structure.
-- **Event-based / REMI-style tokens** (`NOTE_ON`, `NOTE_OFF`, `TIME_SHIFT`, `VELOCITY`,
-  `TEMPO`, `BAR`): variable length, compact, directly exposes tempo/velocity as tokens
-  you can later condition on — closest fit to a physiology-conditioned controller. This
-  is what our baseline already uses (`shared/vocabulary.py`).
-- **MIDI-derived symbolic sequences with explicit metadata channels** (chord/tempo/
-  instrument tracks parsed via `pretty_midi` or `music21`): good middle ground.
-
-**What to record per notebook**: tokenization scheme name, vocabulary size, max
-sequence length used, and whether tempo/dynamics are explicit tokens or implicit in
-timing.
+- Tokenization scheme name, vocabulary size, max sequence length used, and handling of explicit vs. implicit tempo/dynamics tokens.
 
 ### Point 2 — Architecture Pattern
-Classify the model family and note training cost vs. quality trade-offs reported:
+- Model family (Transformer decoder, LSTM, VAE), parameter counts, context window length, and training compute requirements.
 
-- RNN/LSTM baselines (fast to train, weaker long-range coherence).
-- Transformer decoder / GPT-style autoregressive models (better long-range structure,
-  higher compute cost, need relative or learned positional encodings for music).
-- VAE / VQ-VAE + prior (useful for latent-space conditioning — relevant later for your
-  physiology-conditioned latent, worth flagging even if not chosen for baseline).
-- GAN-based (rare for symbolic music, usually raw-audio; note if present).
-
-**What to record**: architecture family, layer count/hidden size if reported,
-context window length, any reported training time/hardware.
-
-### Point 3 — Conditioning Mechanism (if any)
-Even though most Kaggle baselines are unconditional, note any that condition on genre,
-composer, or mood tokens, and *how* they inject the conditioning signal:
-
-- Prepended control token(s) in the input sequence.
-- Concatenated conditioning embedding added to token embeddings.
-- Cross-attention from a separate conditioning encoder.
-- FiLM-style feature-wise modulation of hidden activations.
-
-This directly informs how you will later inject HRV/EDA/respiration features into the
-architecture — treat this as reconnaissance for your actual research contribution.
+### Point 3 — Conditioning Mechanism
+- Method of injecting conditioning signals (prepended tokens, embedding concatenation, cross-attention, FiLM).
 
 ### Point 4 — Evaluation Metrics Used
-Record every metric so you can pick a comparable set for your baseline report:
-
-- Loss-based: validation cross-entropy / perplexity.
-- Music-theoretic: pitch-class histogram entropy, note density, empty-bar rate,
-  scale/key consistency, groove/rhythm consistency (autocorrelation of onsets).
-- Human/qualitative: listening test descriptions (even informal ones — note sample size
-  and bias, since Kaggle listening tests are rarely rigorous).
-- Diversity: unique n-gram rate, self-similarity matrices (to catch repetitive-loop
-  failure modes, directly relevant to Developer B's sampling design, and directly
-  relevant to why our own 5 generated songs sound rough).
+- Loss metrics (perplexity, cross-entropy), music-theoretic metrics (pitch entropy, note density, key consistency), and qualitative/listening tests.
 
 ### Point 5 — Reproducibility & Failure Modes
-- Is there a public repo, fixed random seed, and pinned dependency versions?
-- What failure modes does the author admit to (looping, silence collapse, key drift,
-  mode collapse)? This is often the most valuable section — it tells you what NOT to
-  spend Week 2+ debugging from scratch.
-- Dataset size and preprocessing time reported, so you can sanity-check our own
-  dataset against a known-working scale.
-
-### Deliverable
-A single shared spreadsheet/table, one row per notebook, one column per point above,
-plus a final "Adopt / Reject / Adapt" column with a one-line justification. This
-directly feeds the architectural decisions already made in `developer_a/model.py` below
-— review it and edit `shared/config.py` if the notebook survey suggests a different
-tokenization or context length.
+- Identified failure modes (repetition loops, mode collapse, key drift) and preprocessing scale.
 
 ---
 
@@ -144,57 +104,49 @@ tokenization or context length.
 
 ```
 week1_baseline/
-  shared/
-    config.py         # Single source of truth: vocab size, seq len, model dims,
-                       # checkpoint schema. BOTH developers import this, never each other.
-    vocabulary.py      # Token <-> id mapping and MIDI parsing.
-  developer_a/
-    dataset.py         # PyTorch Dataset/DataLoader for symbolic music sequences.
-                        # Recurses into genre subfolders automatically.
-    model.py           # Baseline lightweight Transformer (LSTM variant included as
-                        # a commented-out drop-in alternative).
-    train.py           # Training loop, validation, checkpointing.
-  developer_b/
-    checkpoint_loader.py  # Loads shared config + Dev A's checkpoint, no Dev A import.
-    sampler.py             # Temperature / top-k / top-p sampling with repetition guard.
-    postprocess.py          # Token sequence -> MIDI file via pretty_midi.
-    generate_song.py        # End-to-end script tying the above together.
-  split_dataset.py     # One-time script: splits genre folders into train/val.
-  dataset/              # Raw MIDI, organized by genre (not committed to git).
-  data/new_dataset/     # Output of split_dataset.py: train/ and val/, each with
-                        # genre subfolders (not committed to git — regeneratable).
-  checkpoints/          # Trained model checkpoints. checkpoint_best.pt is committed
-                        # as evidence; the rest are gitignored.
-  generated_songs/      # baseline_song_01.mid through _05.mid, committed as evidence.
+shared/
+config.py                 # Single source of truth: vocab size, seq len, model dims, checkpoint schema.
+vocabulary.py             # Token <-> id mapping and MIDI parsing.
+developer_a/
+dataset.py                # PyTorch Dataset/DataLoader for symbolic music sequences.
+model.py                  # Baseline Transformer decoder architecture.
+train.py                  # Training loop, validation, checkpointing.
+developer_b/
+checkpoint_loader.py      # Checkpoint loading routines.
+sampler.py                # Temperature / top-k / top-p sampling with repetition constraints.
+postprocess.py            # Token sequence -> MIDI conversion.
+generate_song.py          # End-to-end generation script.
+split_dataset.py            # Dataset split utility for MIDI directories.
+check_wesad.py              # WESAD dataset structure verification script.
+extract_features.py         # Physiological feature extraction script (HRV, EDA).
+kaggle_analysis.xlsx        # 10 Kaggle notebook comparative analysis.
+classical_dataset/          # Raw classical MIDI dataset (local only, gitignored).
+dataset/                    # Raw multi-genre MIDI dataset (local only, gitignored).
+data/                       # Train/val split outputs (local only, gitignored).
+wesad_data/                 # Raw WESAD dataset (local only, gitignored).
+checkpoints/                # Model checkpoint files.
+generated_songs/            # Initial multi-genre generated MIDI outputs.
+generated_songs_classical/  # Classical baseline generated MIDI outputs.
 ```
 
 ## 3. Parallelization Contract
 
-- Freeze `shared/config.py` and `shared/vocabulary.py` first — this is the interface.
-  Any change to vocab size, PAD/BOS/EOS ids, or checkpoint keys must be a discussed,
-  versioned change, not a silent edit.
-- Developer A owns `developer_a/`. Developer B owns `developer_b/`. Neither imports
-  from the other's folder.
-- Developer B validates against a dummy checkpoint (instructions in
-  `developer_b/checkpoint_loader.py` docstring) so the inference pipeline is fully
-  tested before Developer A's first real checkpoint lands.
-- Integration point: `shared/config.CHECKPOINT_SCHEMA` and the `MusicSequenceModel`
-  class name/signature. As long as Developer A does not rename the class or change its
-  `forward()`/`generate_step()` signature, Developer B's code needs zero changes when
-  the real checkpoint arrives.
+- Freeze `shared/config.py` and `shared/vocabulary.py` as the fixed interface between generation and training modules.
+- Developer A owns model training and architecture (`developer_a/`). Developer B owns inference, sampling, and post-processing (`developer_b/`). Neither imports directly from the other's module.
+- Integration point remains `shared/config.CHECKPOINT_SCHEMA` and the `MusicSequenceModel` interface.
 
-## 4. Adapting to the Dataset (done)
+## 4. Reproducing Baseline Runs
 
-The dataset ships as raw MIDI files organized in 5 genre folders (`ambient`,
-`classical`, `jazz`, `pop`, `soundtracks`), each a flat folder of `.mid` files. To
-reproduce the train/val split from scratch:
+To reproduce the data split, training, and generation runs:
 
 ```bash
-python3 split_dataset.py --source_root dataset --output_root data/new_dataset --val_fraction 0.1
-python3 -m developer_a.train --data_root data/new_dataset
-python3 -m developer_b.generate_song --checkpoint checkpoints/checkpoint_best.pt --output_dir generated_songs --num_songs 5
-```
+# 1. Classical Baseline Split & Train
+python3 split_dataset.py --source_root classical_dataset --output_root data/classical_split --val_fraction 0.1
+python3 -m developer_a.train --data_root data/classical_split
 
-Any remaining placeholders for dataset-specific adaptation are marked with
-`# TODO(new_dataset): ...` in the code — none are currently blocking, since the
-pipeline above has already been run successfully end-to-end.
+# 2. Song Generation
+python3 -m developer_b.generate_song --checkpoint checkpoints/checkpoint_best.pt --output_dir generated_songs_classical --num_songs 5
+
+# 3. Physiological Feature Extraction Sanity Check
+python3 extract_features.py
+```
