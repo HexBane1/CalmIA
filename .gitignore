@@ -26,10 +26,10 @@ generated_songs/
 *.midi
 *.wav
 
-# --- Robert's dataset (raw data, keep out of version control) ---
+# --- Dataset (raw data, keep out of version control) ---
 data/
 datasets/
-roberts_dataset/
+wesad_data/
 
 # --- Jupyter ---
 .ipynb_checkpoints/
