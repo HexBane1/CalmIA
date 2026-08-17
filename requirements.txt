@@ -1,4 +1,6 @@
 torch>=2.1.0
 pretty_midi>=0.2.10
-numpy>=1.24.0
-scipy>=1.10.0
+neurokit2
+numpy
+scipy
+pandas
