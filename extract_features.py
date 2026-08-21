@@ -1,64 +1,145 @@
+"""
+Extended physiological feature extraction: real-time windowing + target mapping.
+
+Assigned task (see README): converts the static, whole-block HRV/EDA extraction
+into a continuous, simulated real-time dataset for the RL controller environment.
+
+Usage:
+    python extract_features.py
+"""
+
 import pickle
 import numpy as np
 import neurokit2 as nk
 import pandas as pd
 import warnings
 
-# Suppress pandas/neurokit warnings for cleaner output
 warnings.filterwarnings("ignore")
 
-def process_subject_data(subject_file):
+SAMPLING_RATE = 700  # WESAD chest sensors sampling rate (Hz)
+WINDOW_SECONDS = 10
+WINDOW_SAMPLES = WINDOW_SECONDS * SAMPLING_RATE  # 7000 samples per window
+
+# WESAD condition labels we care about (label 3 = Amusement is excluded per task spec)
+CONDITIONS = {
+    1: "Baseline",
+    2: "Stress",
+    4: "Meditation",
+}
+
+
+def get_windows_for_condition(signal, labels, condition_label, window_samples):
+    """
+    Slices `signal` into consecutive, non-overlapping windows of `window_samples`
+    length, using only the portion where `labels == condition_label`.
+    Leftover samples that don't fill a full window are dropped.
+    """
+    condition_indices = np.where(labels == condition_label)[0]
+    if len(condition_indices) == 0:
+        return []
+
+    condition_signal = signal[condition_indices]
+    num_windows = len(condition_signal) // window_samples
+
+    windows = []
+    for i in range(num_windows):
+        start = i * window_samples
+        end = start + window_samples
+        windows.append(condition_signal[start:end])
+
+    return windows
+
+
+def extract_window_features(ecg_window, eda_window, sampling_rate):
+    """
+    Processes a single 10s window of raw ECG + EDA and returns (hrv_sdnn, mean_eda).
+    Some windows are too short/noisy for neurokit2 to find enough R-peaks -- in that
+    case we return NaN for that metric rather than crashing the whole run, since a
+    handful of unusable windows out of many is expected and shouldn't halt processing.
+    """
+    try:
+        ecg_signals, ecg_info = nk.ecg_process(ecg_window, sampling_rate=sampling_rate)
+        hrv_df = nk.hrv_time(ecg_info, sampling_rate=sampling_rate)
+        hrv_sdnn = hrv_df["HRV_SDNN"].iloc[0]
+    except Exception:
+        hrv_sdnn = np.nan
+
+    try:
+        eda_signals, eda_info = nk.eda_process(eda_window, sampling_rate=sampling_rate)
+        mean_eda = eda_signals["EDA_Tonic"].mean()
+    except Exception:
+        mean_eda = np.nan
+
+    return hrv_sdnn, mean_eda
+
+
+def calculate_music_targets(hrv, eda):
+    """
+    Rule-based mapping from physiological state to musical targets, per the
+    project's safety constraints: high arousal / low HRV -> calmer music
+    (lower tempo, lower complexity), to avoid reinforcing a stressed state.
+
+    Thresholds (HRV_SDNN in ms, EDA in microsiemens) are a first-pass baseline,
+    not clinically validated -- meant to be tuned once we have more subjects.
+    """
+    if np.isnan(hrv) or np.isnan(eda):
+        return np.nan, np.nan
+
+    high_stress = hrv < 50 and eda > 2.0
+    moderate_stress = (hrv < 50) != (eda > 2.0)  # exactly one condition triggered
+
+    if high_stress:
+        target_tempo, target_complexity = 70, 0.2
+    elif moderate_stress:
+        target_tempo, target_complexity = 90, 0.5
+    else:
+        target_tempo, target_complexity = 110, 0.8
+
+    return target_tempo, target_complexity
+
+
+def process_subject(subject_file, output_csv):
     print(f"Loading data from {subject_file}...")
     with open(subject_file, "rb") as f:
         data = pickle.load(f, encoding="latin1")
 
-    # WESAD chest sensors are sampled at 700Hz
-    sampling_rate = 700 
-
-    # Extract the raw signals and labels from the chest device
     ecg_raw = data["signal"]["chest"]["ECG"].flatten()
     eda_raw = data["signal"]["chest"]["EDA"].flatten()
     labels = data["label"].flatten()
 
-    # WESAD Labels: 1 = Baseline, 2 = Stress, 3 = Amusement, 4 = Meditation
-    # We isolate the data where the subject was officially in the "Stress" condition
-    stress_indices = np.where(labels == 2)[0]
-    
-    if len(stress_indices) == 0:
-        print("No stress data found for this subject.")
-        return
+    rows = []
+    timestamp = 0.0
 
-    # Slice the raw signals to only include the stress period
-    ecg_stress = ecg_raw[stress_indices]
-    eda_stress = eda_raw[stress_indices]
+    for label_value, condition_name in CONDITIONS.items():
+        ecg_windows = get_windows_for_condition(ecg_raw, labels, label_value, WINDOW_SAMPLES)
+        eda_windows = get_windows_for_condition(eda_raw, labels, label_value, WINDOW_SAMPLES)
+        n_windows = min(len(ecg_windows), len(eda_windows))
 
-    duration_seconds = len(ecg_stress) / sampling_rate
-    print(f"Processing {duration_seconds:.2f} seconds of 'Stress' condition data...")
+        print(f"{condition_name}: {n_windows} windows of {WINDOW_SECONDS}s each")
 
-    # 1. Process ECG to get Heart Rate Variability (HRV)
-    print("Extracting ECG features (cleaning signal & finding R-peaks)...")
-    ecg_signals, ecg_info = nk.ecg_process(ecg_stress, sampling_rate=sampling_rate)
-    
-    # Calculate HRV metrics
-    hrv_df = nk.hrv(ecg_info, sampling_rate=sampling_rate)
-    
-    # 2. Process EDA to get Skin Conductance (Arousal/Stress level)
-    print("Extracting EDA features (calculating skin conductance)...")
-    eda_signals, eda_info = nk.eda_process(eda_stress, sampling_rate=sampling_rate)
-    
-    # Calculate mean Skin Conductance Level (SCL) - a prime indicator of physiological arousal
-    mean_scl = eda_signals["EDA_Tonic"].mean()
+        for i in range(n_windows):
+            hrv_sdnn, mean_eda = extract_window_features(
+                ecg_windows[i], eda_windows[i], SAMPLING_RATE
+            )
+            target_tempo, target_complexity = calculate_music_targets(hrv_sdnn, mean_eda)
 
-    # Output the actionable conditioning variables
-    print("\n" + "="*50)
-    print(" EXTRACTED PHYSIOLOGICAL CONDITIONING VARIABLES")
-    print("="*50)
-    print(f"Mean Heart Rate: {ecg_signals['ECG_Rate'].mean():.2f} BPM")
-    print(f"HRV (SDNN):      {hrv_df['HRV_SDNN'].iloc[0]:.2f} ms  <-- (Lower generally means higher stress)")
-    print(f"Mean EDA (SCL):  {mean_scl:.4f}          <-- (Higher means higher arousal/stress)")
-    print(f"EDA Responses:   {len(eda_info['SCR_Peaks'])} peaks          <-- (Number of sweat gland responses)")
-    print("="*50)
+            rows.append(
+                {
+                    "Timestamp": timestamp,
+                    "Condition_Label": condition_name,
+                    "HRV_SDNN": hrv_sdnn,
+                    "Mean_EDA": mean_eda,
+                    "Target_Tempo": target_tempo,
+                    "Target_Complexity": target_complexity,
+                }
+            )
+            timestamp += WINDOW_SECONDS
+
+    df = pd.DataFrame(rows)
+    df.to_csv(output_csv, index=False)
+    print(f"\nSaved {len(df)} rows to {output_csv}")
+    print(f"Rows with valid (non-NaN) HRV: {df['HRV_SDNN'].notna().sum()}/{len(df)}")
+
 
 if __name__ == "__main__":
-    # Point this to your existing WESAD subject folder
-    process_subject_data("wesad_data/S2/S2.pkl")
+    process_subject("wesad_data/S2/S2.pkl", "S2_physiological_timeline.csv")

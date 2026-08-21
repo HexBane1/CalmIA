@@ -10,6 +10,7 @@
 - Model checkpoints: Best weights are tracked in `checkpoints/checkpoint_best.pt`.
 - Reference review: Completed the 10 Kaggle reference notebook analysis (`kaggle_analysis.xlsx`).
 - Physiological data pipeline: Verified WESAD file integrity (`check_wesad.py`) and verified extraction of Heart Rate, HRV (SDNN), and EDA (Skin Conductance Level) metrics (`extract_features.py`).
+- Real-time windowing & target mapping: Extended `extract_features.py` to produce a windowed, multi-condition physiological timeline (`S2_physiological_timeline.csv`) — see Section 4 below for details.
 
 ## Collaborator Setup & Requirements
 
@@ -34,7 +35,7 @@ You must download the datasets locally and place them in the project root.
 Do not manually split the MIDI files. Generate the local splits by running the preprocessing script:
 `python split_dataset.py --source_root classical_dataset --output_root data/classical_split --val_fraction 0.1`
 
-**4. Assigned Task: Real-Time Windowing & Target Mapping**
+**4. Real-Time Windowing & Target Mapping**
 The current `extract_features.py` script extracts static HRV and EDA metrics from the raw WESAD data. Your task is to convert this into a continuous, simulated real-time dataset to serve as the environment for the Reinforcement Learning controller.
 
 **Action Items:**
@@ -42,6 +43,26 @@ The current `extract_features.py` script extracts static HRV and EDA metrics fro
 * **Multi-State Extraction:** Extract features for the Baseline (Label 1), Stress (Label 2), and Meditation (Label 4) conditions.
 * **Rule-Based Mapper:** Create a function `calculate_music_targets(hrv, eda)` that applies our safety constraints to map physiological states to musical targets (e.g., high EDA/low HRV outputs a lower target tempo and complexity).
 * **Data Export:** Save the windowed results to a CSV file (e.g., `S2_physiological_timeline.csv`) containing the following columns: `[Timestamp, Condition_Label, HRV_SDNN, Mean_EDA, Target_Tempo, Target_Complexity]`.
+
+**Implementation Notes:**
+
+- Implemented `get_windows_for_condition()`: slices raw signal into consecutive
+  10-second windows (7000 samples at 700Hz), filtered per condition label.
+- Extended feature extraction to cover Baseline (1), Stress (2), and Meditation (4),
+  not just Stress.
+- Implemented `calculate_music_targets(hrv, eda)`: rule-based mapping using
+  HRV_SDNN < 50ms and EDA > 2.0 microsiemens as high-arousal thresholds, producing
+  lower target tempo/complexity under high stress (safety-first: calm rather than
+  excite). Thresholds are a first-pass baseline, not clinically validated.
+- Fixed an HRV computation issue: switched from `nk.hrv()` (all HRV domains) to
+  `nk.hrv_time()` (time-domain only), since the full computation failed on most
+  10s windows (especially Meditation, where low variability broke the
+  frequency-domain calculations). This raised valid-window coverage from 16% to 100%.
+- Output: `S2_physiological_timeline.csv`, 251 rows (114 Baseline / 61 Stress /
+  76 Meditation), columns: `Timestamp, Condition_Label, HRV_SDNN, Mean_EDA,
+  Target_Tempo, Target_Complexity`.
+- Sanity check: mean HRV_SDNN is lowest under Stress (49.1ms) and highest under
+  Meditation (59.3ms), consistent with expected physiology.
 
 ---
 
@@ -118,7 +139,7 @@ postprocess.py            # Token sequence -> MIDI conversion.
 generate_song.py          # End-to-end generation script.
 split_dataset.py            # Dataset split utility for MIDI directories.
 check_wesad.py              # WESAD dataset structure verification script.
-extract_features.py         # Physiological feature extraction script (HRV, EDA).
+extract_features.py         # Physiological feature extraction script (HRV, EDA, windowed + target mapping).
 kaggle_analysis.xlsx        # 10 Kaggle notebook comparative analysis.
 classical_dataset/          # Raw classical MIDI dataset (local only, gitignored).
 dataset/                    # Raw multi-genre MIDI dataset (local only, gitignored).
@@ -127,6 +148,7 @@ wesad_data/                 # Raw WESAD dataset (local only, gitignored).
 checkpoints/                # Model checkpoint files.
 generated_songs/            # Initial multi-genre generated MIDI outputs.
 generated_songs_classical/  # Classical baseline generated MIDI outputs.
+S2_physiological_timeline.csv  # Windowed HRV/EDA + music target mapping output for subject S2.
 ```
 
 ## 3. Parallelization Contract
