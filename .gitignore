@@ -30,6 +30,8 @@ generated_songs/
 data/
 datasets/
 wesad_data/
+dataset/
+classical_dataset/
 
 # --- Jupyter ---
 .ipynb_checkpoints/
