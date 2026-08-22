@@ -29,8 +29,8 @@ from developer_b.postprocess import tokens_to_midi
 def build_seed_primer() -> list:
     """
     Returns a minimal seed primer (just BOS) to start generation from silence.
-    TODO(robert-dataset): replace with a short tokenized phrase extracted from a
-    real reference piece in Robert's dataset once available, to seed generation
+    TODO(new_dataset): replace with a short tokenized phrase extracted from a
+    real reference piece in the dataset once available, to seed generation
     with a more musically grounded opening.
     """
     return [DATA_CONFIG.bos_token_id]
