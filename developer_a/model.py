@@ -58,6 +58,7 @@ class MusicSequenceModel(nn.Module):
         dropout: float = None,
         max_sequence_length: int = None,
         pad_token_id: int = None,
+        conditioning_dim: int = 0,
     ):
         super().__init__()
         vocab_size = vocab_size or DATA_CONFIG.vocab_size
@@ -69,8 +70,21 @@ class MusicSequenceModel(nn.Module):
         max_sequence_length = max_sequence_length or DATA_CONFIG.max_sequence_length
         self.pad_token_id = pad_token_id if pad_token_id is not None else DATA_CONFIG.pad_token_id
 
+        # Physiological conditioning support (Week 2+). Disabled by default
+        # (conditioning_dim=0) so every existing call site and every checkpoint
+        # trained under the Week 1 baseline continues to work unchanged. Pass
+        # conditioning_dim=CONDITIONING_CONFIG.num_features explicitly to enable
+        # it once real feature extraction exists.
+        self.conditioning_dim = conditioning_dim
+        if self.conditioning_dim > 0:
+            self.conditioning_projection = nn.Linear(self.conditioning_dim, d_model)
+        else:
+            self.conditioning_projection = None
+
         self.d_model = d_model
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.pad_token_id)
+        # +8 headroom already covers the one extra position the conditioning
+        # token occupies when enabled; no change needed here.
         self.positional_encoding = PositionalEncoding(d_model, max_len=max_sequence_length + 8)
         self.embedding_dropout = nn.Dropout(dropout)
 
@@ -101,26 +115,72 @@ class MusicSequenceModel(nn.Module):
         # when a float attention mask is combined with a bool padding mask.
         return torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool, device=device), diagonal=1)
 
-    def forward(self, input_ids: torch.Tensor, padding_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        padding_mask: torch.Tensor = None,
+        conditioning_vector: torch.Tensor = None,
+    ) -> torch.Tensor:
         """
         Args:
             input_ids: (batch, seq_len) long tensor of token ids.
             padding_mask: (batch, seq_len) bool tensor, True where padded. Optional.
+            conditioning_vector: (batch, conditioning_dim) float tensor of
+                physiological features (e.g. HRV, EDA, respiration_rate,
+                movement_quality -- see shared.config.CONDITIONING_CONFIG for the
+                canonical feature order). Required if this model was constructed
+                with conditioning_dim > 0; must be omitted otherwise.
 
         Returns:
-            logits: (batch, seq_len, vocab_size)
+            logits: (batch, seq_len, vocab_size) -- always aligned one-to-one with
+            input_ids, regardless of whether conditioning is enabled. When
+            conditioning is enabled, the conditioning token is prepended
+            internally as an extra attention position and its own output
+            position is dropped before returning, so callers never need to
+            know conditioning is happening under the hood.
         """
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
 
         x = self.token_embedding(input_ids) * math.sqrt(self.d_model)
+
+        if self.conditioning_projection is not None:
+            if conditioning_vector is None:
+                raise ValueError(
+                    "This model was constructed with conditioning_dim > 0, so "
+                    "forward() requires a conditioning_vector of shape "
+                    "(batch, conditioning_dim)."
+                )
+            conditioning_embedding = self.conditioning_projection(conditioning_vector)
+            conditioning_embedding = conditioning_embedding.unsqueeze(1)  # (batch, 1, d_model)
+            x = torch.cat([conditioning_embedding, x], dim=1)  # prepend as position 0
+
+            if padding_mask is not None:
+                conditioning_padding = torch.zeros(batch_size, 1, dtype=torch.bool, device=device)
+                padding_mask = torch.cat([conditioning_padding, padding_mask], dim=1)
+        elif conditioning_vector is not None:
+            raise ValueError(
+                "A conditioning_vector was passed, but this model was constructed "
+                "with conditioning_dim=0 (conditioning disabled). Construct the "
+                "model with conditioning_dim > 0 to use conditioning."
+            )
+
         x = self.positional_encoding(x)
         x = self.embedding_dropout(x)
 
-        causal_mask = self._generate_causal_mask(seq_len, device)
+        attended_seq_len = x.size(1)
+        causal_mask = self._generate_causal_mask(attended_seq_len, device)
         x = self.decoder(x, mask=causal_mask, src_key_padding_mask=padding_mask)
         x = self.output_norm(x)
         logits = self.output_projection(x)
+
+        if self.conditioning_projection is not None:
+            # Drop the conditioning position's output. Position 0's output would
+            # "predict" input_ids[0] using only the conditioning vector as
+            # context, which is not a meaningful target; positions 1..end already
+            # align exactly with input_ids after this slice.
+            logits = logits[:, 1:, :]
+
         return logits
 
 

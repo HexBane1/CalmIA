@@ -4,3 +4,5 @@ neurokit2
 numpy
 scipy
 pandas
+gymnasium
+stable-baselines3

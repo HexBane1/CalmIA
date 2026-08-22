@@ -33,7 +33,7 @@ dataset folders.
 
 Usage:
     python3 split_dataset.py --source_root /path/to/dataset_with_genre_folders \
-                              --output_root data/roberts_dataset \
+                              --output_root data/new_dataset \
                               --val_fraction 0.1
 """
 
