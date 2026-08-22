@@ -8,9 +8,9 @@ so that Developer B's loader can consume them without any coordination beyond th
 shared schema.
 
 Usage:
-    python -m developer_a.train --data_root /path/to/roberts_dataset
+    python -m developer_a.train --data_root /path/to/dataset
 
-TODO(robert-dataset): confirm the data_root path and directory layout expected by
+TODO(dataset): confirm the data_root path and directory layout expected by
 MusicSequenceDataset before the first real run.
 """
 
@@ -84,14 +84,21 @@ def save_checkpoint(
     return checkpoint_path
 
 
-def train(data_root: str, checkpoint_dir: str = None, num_epochs: int = None) -> None:
+def train(
+    data_root: str,
+    checkpoint_dir: str = None,
+    num_epochs: int = None,
+    labels_csv_path: str = None,
+) -> None:
     checkpoint_dir = checkpoint_dir or TRAIN_CONFIG.checkpoint_dir
     num_epochs = num_epochs or TRAIN_CONFIG.num_epochs
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    if labels_csv_path is not None:
+        print(f"Discrete condition-token conditioning ENABLED using: {labels_csv_path}")
 
-    train_loader, val_loader = build_dataloaders(data_root)
+    train_loader, val_loader = build_dataloaders(data_root, labels_csv_path=labels_csv_path)
     print(f"Train batches per epoch: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     model = MusicSequenceModel().to(device)
@@ -154,12 +161,23 @@ def train(data_root: str, checkpoint_dir: str = None, num_epochs: int = None) ->
 
 def main():
     parser = argparse.ArgumentParser(description="Train the Week 1 baseline music generation model.")
-    parser.add_argument("--data_root", type=str, required=True, help="Path to Robert's dataset root.")
+    parser.add_argument("--data_root", type=str, required=True, help="Path to the dataset root.")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--num_epochs", type=int, default=None)
+    parser.add_argument(
+        "--labels_csv", type=str, default=None,
+        help="Path to label_midi_features.py's output CSV. If provided, enables "
+             "Task 2 discrete condition-token conditioning. Omit to train the "
+             "plain, unconditioned baseline.",
+    )
     args = parser.parse_args()
 
-    train(data_root=args.data_root, checkpoint_dir=args.checkpoint_dir, num_epochs=args.num_epochs)
+    train(
+        data_root=args.data_root,
+        checkpoint_dir=args.checkpoint_dir,
+        num_epochs=args.num_epochs,
+        labels_csv_path=args.labels_csv,
+    )
 
 
 if __name__ == "__main__":

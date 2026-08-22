@@ -43,6 +43,56 @@ NUM_TEMPO_BINS = 32
 # Remaining ids reserved for future conditioning tokens (Week 2+: HRV/EDA bins, etc.)
 VOCAB_SIZE = 512  # must match shared.config.DataConfig.vocab_size
 
+# ---------------------------------------------------------------------------
+# Discrete condition tokens (Task 2: physiology-informed music conditioning)
+# ---------------------------------------------------------------------------
+# Prepended to the start of every training window (see developer_a/dataset.py)
+# so the model learns to associate a condition-token pair with the musical
+# content that follows it. These are ordinary vocabulary tokens -- embedding
+# them requires no architecture change, since nn.Embedding already covers the
+# full VOCAB_SIZE range and the Transformer treats any token id identically.
+#
+# NOTE: this is a *different* concept from the per-event TEMPO_* bins above
+# (ids TEMPO_OFFSET..TEMPO_OFFSET+31), which represent a tempo value occurring
+# at a specific point within a piece and are currently unused by
+# load_midi_as_tokens. These new tokens instead represent a whole-sequence
+# style REQUEST, decided once per training example -- kept in a separate id
+# range so the two concepts are never confused.
+CONDITION_TOKEN_OFFSET = TEMPO_OFFSET + NUM_TEMPO_BINS  # = 451
+TEMPO_SLOW = CONDITION_TOKEN_OFFSET + 0        # 451
+TEMPO_FAST = CONDITION_TOKEN_OFFSET + 1        # 452
+COMPLEXITY_LOW = CONDITION_TOKEN_OFFSET + 2    # 453
+COMPLEXITY_HIGH = CONDITION_TOKEN_OFFSET + 3   # 454
+NUM_CONDITION_TOKEN_IDS = 4
+
+CONDITION_TOKEN_NAMES = {
+    TEMPO_SLOW: "TEMPO_SLOW",
+    TEMPO_FAST: "TEMPO_FAST",
+    COMPLEXITY_LOW: "COMPLEXITY_LOW",
+    COMPLEXITY_HIGH: "COMPLEXITY_HIGH",
+}
+
+_TEMPO_BIN_TO_TOKEN = {"TEMPO_SLOW": TEMPO_SLOW, "TEMPO_FAST": TEMPO_FAST}
+_COMPLEXITY_BIN_TO_TOKEN = {"COMPLEXITY_LOW": COMPLEXITY_LOW, "COMPLEXITY_HIGH": COMPLEXITY_HIGH}
+
+
+def tempo_condition_token(tempo_bin: str) -> int:
+    """Maps a label_midi_features.py 'tempo_bin' string to its token id."""
+    if tempo_bin not in _TEMPO_BIN_TO_TOKEN:
+        raise ValueError(f"Unknown tempo_bin: {tempo_bin!r}")
+    return _TEMPO_BIN_TO_TOKEN[tempo_bin]
+
+
+def complexity_condition_token(complexity_bin: str) -> int:
+    """Maps a label_midi_features.py 'complexity_bin' string to its token id."""
+    if complexity_bin not in _COMPLEXITY_BIN_TO_TOKEN:
+        raise ValueError(f"Unknown complexity_bin: {complexity_bin!r}")
+    return _COMPLEXITY_BIN_TO_TOKEN[complexity_bin]
+
+
+def is_condition_token(token_id: int) -> bool:
+    return token_id in CONDITION_TOKEN_NAMES
+
 
 def note_on_token(pitch: int) -> int:
     assert 0 <= pitch < NUM_PITCHES, f"pitch out of range: {pitch}"

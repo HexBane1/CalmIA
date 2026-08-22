@@ -4,10 +4,18 @@ Extended physiological feature extraction: real-time windowing + target mapping.
 Assigned task (see README): converts the static, whole-block HRV/EDA extraction
 into a continuous, simulated real-time dataset for the RL controller environment.
 
+Task 3 update: scaled from a single subject (S2) to loop across all available
+WESAD subjects (S2-S17, S12 excluded -- known sensor malfunction in the
+official WESAD release), aggregating every subject's rows into one unified
+wesad_physiological_timeline.csv. Per-subject extraction logic
+(get_windows_for_condition, extract_window_features, calculate_music_targets)
+is unchanged from the original single-subject version.
+
 Usage:
     python extract_features.py
 """
 
+import os
 import pickle
 import numpy as np
 import neurokit2 as nk
@@ -26,6 +34,13 @@ CONDITIONS = {
     2: "Stress",
     4: "Meditation",
 }
+
+WESAD_ROOT = "wesad_data"
+OUTPUT_CSV = "wesad_physiological_timeline.csv"
+
+# Subjects S2..S17. S12 is excluded: known sensor malfunction in the official
+# WESAD release (S1 was also never released by the original authors).
+ALL_SUBJECT_IDS = [n for n in range(2, 18) if n != 12]
 
 
 def get_windows_for_condition(signal, labels, condition_label, window_samples):
@@ -81,6 +96,10 @@ def calculate_music_targets(hrv, eda):
 
     Thresholds (HRV_SDNN in ms, EDA in microsiemens) are a first-pass baseline,
     not clinically validated -- meant to be tuned once we have more subjects.
+    Task 3 provides exactly that (all-subject data) -- worth revisiting these
+    fixed thresholds against the full aggregated population once this run
+    completes; left unchanged here since that recalibration wasn't part of
+    this update.
     """
     if np.isnan(hrv) or np.isnan(eda):
         return np.nan, np.nan
@@ -98,7 +117,12 @@ def calculate_music_targets(hrv, eda):
     return target_tempo, target_complexity
 
 
-def process_subject(subject_file, output_csv):
+def process_subject(subject_file, subject_id):
+    """
+    Extracts windowed HRV/EDA features + rule-based targets for a single
+    subject's WESAD .pkl file. Returns a DataFrame -- aggregation and saving
+    to disk now happen once, across all subjects, in main().
+    """
     print(f"Loading data from {subject_file}...")
     with open(subject_file, "rb") as f:
         data = pickle.load(f, encoding="latin1")
@@ -115,7 +139,7 @@ def process_subject(subject_file, output_csv):
         eda_windows = get_windows_for_condition(eda_raw, labels, label_value, WINDOW_SAMPLES)
         n_windows = min(len(ecg_windows), len(eda_windows))
 
-        print(f"{condition_name}: {n_windows} windows of {WINDOW_SECONDS}s each")
+        print(f"  [{subject_id}] {condition_name}: {n_windows} windows of {WINDOW_SECONDS}s each")
 
         for i in range(n_windows):
             hrv_sdnn, mean_eda = extract_window_features(
@@ -126,6 +150,7 @@ def process_subject(subject_file, output_csv):
             rows.append(
                 {
                     "Timestamp": timestamp,
+                    "Subject": subject_id,
                     "Condition_Label": condition_name,
                     "HRV_SDNN": hrv_sdnn,
                     "Mean_EDA": mean_eda,
@@ -135,11 +160,37 @@ def process_subject(subject_file, output_csv):
             )
             timestamp += WINDOW_SECONDS
 
-    df = pd.DataFrame(rows)
-    df.to_csv(output_csv, index=False)
-    print(f"\nSaved {len(df)} rows to {output_csv}")
-    print(f"Rows with valid (non-NaN) HRV: {df['HRV_SDNN'].notna().sum()}/{len(df)}")
+    return pd.DataFrame(rows)
+
+
+def main():
+    all_frames = []
+
+    for subject_num in ALL_SUBJECT_IDS:
+        subject_id = f"S{subject_num}"
+        subject_file = os.path.join(WESAD_ROOT, subject_id, f"{subject_id}.pkl")
+
+        if not os.path.isfile(subject_file):
+            print(f"SKIPPING {subject_id}: file not found at {subject_file}")
+            continue
+
+        df = process_subject(subject_file, subject_id)
+        all_frames.append(df)
+
+    if not all_frames:
+        raise RuntimeError(
+            f"No subject files were found under {WESAD_ROOT}/ -- nothing to aggregate. "
+            f"Expected layout: {WESAD_ROOT}/S2/S2.pkl, {WESAD_ROOT}/S3/S3.pkl, etc."
+        )
+
+    combined = pd.concat(all_frames, ignore_index=True)
+    combined.to_csv(OUTPUT_CSV, index=False)
+
+    print(f"\nSaved {len(combined)} total rows across {len(all_frames)} subject(s) -> {OUTPUT_CSV}")
+    print(f"Rows with valid (non-NaN) HRV: {combined['HRV_SDNN'].notna().sum()}/{len(combined)}")
+    print("\nRows per subject:")
+    print(combined["Subject"].value_counts().sort_index())
 
 
 if __name__ == "__main__":
-    process_subject("wesad_data/S2/S2.pkl", "S2_physiological_timeline.csv")
+    main()
