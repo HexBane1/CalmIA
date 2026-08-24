@@ -1,5 +1,35 @@
 # Week 1 — Physiology-Conditioned Generative Music: Baseline Establishment
 
+## Collaborator Hand-off & Immediate Next Steps
+
+**To my colleague:** I have completed the core engineering pipeline (baseline generation, discrete conditioning, Safe RL controller, robustness testing, and systems profiling) and pushed everything to GitHub.
+
+Your goal is to complete the final computational benchmarking scripts to fully satisfy the remaining project rubric requirements: multi-seed statistical testing, ablation studies, hyperparameter optimization, and real respiration data extraction.
+
+**Instructions:**
+We are using Claude to generate the final benchmarking scripts. In our last session, Claude correctly pushed back on a prompt asking to add "fake" untrained tokens for intensity/tension and mocking EEG data (which doesn't exist in WESAD). We agreed to document those as "Dataset Limitations / Future Work" in our Phase 5 report instead.
+
+**Please copy and paste the prompt below to Claude (along with the rest of this README for context if in a new chat) to continue the work:**
+
+**Context for AI:** We are continuing the development of the "Physiology-Conditioned Generative Music" project. Your previous pushback on Proposal #3 was spot on. You are completely right: adding untrained tokens for Intensity/Tension would break the generator, and mocking EEG when it simply isn't in WESAD is bad research practice. We will document the absence of EEG, Intensity, and Tension as "Dataset Limitations / Future Work" in the report instead. 
+
+I also agree that we should extract the real Respiration (`RESP`) data from WESAD instead of mocking it. 
+
+Please pick up exactly where you left off. Here is the revised plan to finish the rubric:
+
+**1. Finish `run_experiments.py`**
+Please provide the complete code for the multi-seed statistics and ablation study script that you were in the middle of writing. (Comparing the Safe PPO agent against an `Unsafe` agent where `SAFETY_PENALTY = 0`).
+ 
+**2. Write `optimize_hpo.py`**
+Provide the Optuna script for hyperparameter optimization. Even if it just confirms that PPO's default parameters are near-optimal for this environment, having the automated search documented is required by the rubric.
+
+**3. Real Respiration Extraction (`extract_features.py` & `rl_env.py`)**
+Instead of fake mocks, please provide the exact code snippets needed to update:
+*   `extract_features.py`: To extract the `RESP` channel from the WESAD dataset alongside HRV and EDA.
+*   `rl_env.py`: To expand the observation space from 2D to 3D `(HRV, EDA, RESP)`.
+ 
+Please provide the completed `run_experiments.py` first, so I can start the multi-seed ablation training, followed by the Optuna script and the Respiration updates.
+
 ## Status Summary (read this first)
 
 **Where things stand:** the baseline, the discrete condition-token conditioning pipeline, and the core Safe RL controller are all implemented and pushed to GitHub. Here is the summary of what has been implemented:
