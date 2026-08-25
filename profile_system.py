@@ -69,7 +69,7 @@ def synthetic_observation(rng: np.random.Generator) -> np.ndarray:
     behavior, not typical steady-state latency, which is not what this
     script is measuring.
     """
-    return rng.uniform(-2.0, 2.0, size=2).astype(np.float32)
+    return rng.uniform(-2.0, 2.0, size=3).astype(np.float32)
 
 
 def action_to_primer(action: int) -> list:

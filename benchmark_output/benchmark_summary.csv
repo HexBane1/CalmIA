@@ -1,0 +1,2 @@
+Arm,ArmName,TotalSteps,HighStressSteps,DangerousActionRate,CalmingActionRate,DangerousDuringStressRate
+4,NonAdaptive_AI,251,26,0.0,0.0,0.0
