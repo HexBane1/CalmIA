@@ -124,7 +124,7 @@ def run_arm_4_nonadaptive(
     rows = []
     for step_idx, (_, row) in enumerate(timeline.iterrows()):
         primer = [DATA_CONFIG.bos_token_id]
-        token_ids = generate(model, primer_ids=primer, max_new_tokens=256,
+        token_ids = generate(model, primer_ids=primer, max_new_tokens=512,
                              temperature=1.0, top_k=40, top_p=0.9,
                              repetition_penalty=1.2)
         midi_path = os.path.join(output_dir, f"arm4_step_{step_idx:04d}.mid")
@@ -196,7 +196,7 @@ def run_arm_5_closedloop(
         except KeyError:
             primer = [DATA_CONFIG.bos_token_id]
 
-        token_ids = generate(music_model, primer_ids=primer, max_new_tokens=256,
+        token_ids = generate(music_model, primer_ids=primer, max_new_tokens=512,
                              temperature=1.0, top_k=40, top_p=0.9,
                              repetition_penalty=1.2)
         midi_path = os.path.join(output_dir, f"arm5_step_{step_idx:04d}.mid")

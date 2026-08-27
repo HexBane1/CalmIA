@@ -18,18 +18,19 @@
 - Initial multi-genre baseline: Trained on 5 genres (`ambient`, `classical`, `jazz`, `pop`, `soundtracks`) using `split_dataset.py` to produce `data/new_dataset/`. Generated baseline songs are in `generated_songs/`.
 - Classical baseline: Curated a single-genre classical dataset (`classical_dataset/`) split into `data/classical_split/` to reduce genre-confusion. Retrained the model and generated the classical baseline batch in `generated_songs_classical/`.
 - **Discrete condition-token conditioning:** `label_midi_features.py` scans the classical MIDI dataset and quantizes each file's average tempo and note density into discrete bins (`TEMPO_SLOW`/`TEMPO_FAST`, `COMPLEXITY_LOW`/`COMPLEXITY_HIGH`), output as `midi_labels.csv`. The vocabulary, dataset pipeline, and training script were extended so these tokens are prepended to every training window — **no architecture change was required**, since condition tokens are ordinary vocabulary entries the existing Transformer already handles. Retrained and confirmed the model generates audibly different output per condition (`generated_songs_conditioned/`).
-- Model checkpoints: Best weights are tracked in `checkpoints/checkpoint_epoch020.pt`.
+- Model checkpoints: Best weights are tracked in `checkpoints/checkpoint_best.pt` (trained for 60 epochs, best val_loss at epoch 59).
 - Reference review: Completed the 10 Kaggle reference notebook analysis (`kaggle_analysis.xlsx`).
 - **Physiological data pipeline (HRV + EDA + Respiration):** `extract_features.py` extracts all three signals from WESAD chest sensors (700Hz) using 10-second non-overlapping windows across Baseline, Stress, and Meditation conditions. `nk.hrv_time()` replaced `nk.hrv()` (raised valid HRV coverage from 16% to 100% on short windows). `scipy.signal.find_peaks()` replaced `nk.rsp_process()` for respiration (10s windows contain only 1-2 breath cycles — insufficient for neurokit2's full RSP pipeline). Scaled across all 15 WESAD subjects (S2–S17, S12 excluded — known sensor malfunction), producing **3,924 rows, 100% valid** in `wesad_physiological_timeline.csv`.
 - **Patient-reported outcomes:** `parse_questionnaire.py` extracts PANAS, STAI, DIM, and SSSQ self-report scores from each subject's `_quest.csv` file across all 7 conditions (Base, TSST, Medi1, Fun, Medi2, sRead, fRead), producing `wesad_questionnaire_summary.csv` (105 rows, 15 subjects).
 - Real-time windowing & target mapping: Original single-subject implementation documented in Section 4; multi-subject scaled version in Section 6.
-- **Safe RL Controller (Phase 2):** `rl_env.py` implements `PatientPhysiologyEnv` — state = normalized **(HRV_SDNN, Mean_EDA, Mean_RSP_Rate)** [3D as of Task 4], action = 4-way discrete tempo/complexity choice, reward = +1 therapeutic bonus for Slow/Low under high stress, flat −5 safety penalty (not stacked) for abrupt transitions, 3-step oscillations, or Fast/High under high stress. `train_rl.py` trains PPO for 75,000 timesteps. `closed_loop_generate.py` steps the agent through a subject's timeline and generates one MIDI snippet per step into `closed_loop_output/`.
-- **5-arm benchmark (Phase 3):** `benchmark_arms.py` compares Silence, Fixed Music, Therapist-Selected (simulated), Non-Adaptive AI, and Closed-Loop Adaptive AI on Subject S2. Results in `benchmark_output/`.
+- **Safe RL Controller (Phase 2):** `rl_env.py` implements `PatientPhysiologyEnv` — state = normalized **(HRV_SDNN, Mean_EDA, Mean_RSP_Rate)** [3D], action = 4-way discrete tempo/complexity choice, reward = +1 therapeutic bonus for Slow/Low under high stress, flat −5 safety penalty (not stacked) for abrupt transitions, 3-step oscillations, or Fast/High under high stress. `train_rl.py` trains PPO for 75,000 timesteps. `closed_loop_generate.py` steps the agent through a subject's timeline and generates one MIDI snippet per step into `closed_loop_output/`.
+- **5-arm benchmark (Phase 3):** `benchmark_arms.py` compares Silence, Fixed Music, Therapist-Selected (simulated), Non-Adaptive AI, and Closed-Loop Adaptive AI on Subject S2. Results in `benchmark_output/` (original) and `benchmark_output_v2/` (improved model, 512-token snippets).
 - **Multi-seed ablation + Bootstrap CI (Phase 4):** `run_experiments.py` compares Safe (penalty=−5) vs Unsafe (penalty=0) PPO agents across 5 random seeds, with Mann-Whitney U tests and 95% bootstrap confidence intervals.
 - **Hyperparameter optimization (Phase 4):** `optimize_hpo.py` runs an Optuna search over PPO's key hyperparameters (learning_rate, n_steps, batch_size, gamma, ent_coef, clip_range) across 15 trials.
 - **Robustness testing (Phase 4):** `robustness_test.py` tests the trained agent under simulated sensor noise (Gaussian, 3σ) and packet dropout (hold-last-known-good fallback).
 - **Systems profiling (Phase 4):** `profile_system.py` measures RL decision latency, music generation latency, throughput, and memory.
 - **MIDI quality metrics (Phase 4/5):** `midi_metrics.py` computes note density, rhythm regularity, repetition rate, and pitch entropy on generated MIDI files.
+- **Improved generation (v2):** Model retrained for 60 epochs (best checkpoint at epoch 59, val_loss 4.49). Generation snippet length increased from 256 to 512–1024 tokens for more coherent musical output. `concatenate_midi.py` stitches per-step Arm 5 snippets into a single continuous 66-minute adaptive music timeline (`concatenated_arm5_v2.mid`, local only).
 
 ### Known open items
 
@@ -38,6 +39,7 @@
 - **Phase 2's action space is simpler than the original roadmap envisioned.** The roadmap originally called for controlling "tempo delta, harmonic tension, rhythmic complexity" as separate, more granular levers. What's implemented is a single 4-way discrete choice over (tempo, complexity) jointly — a deliberate simplification to get a working closed loop end-to-end, not an oversight.
 - **RESP computation limitation.** `nk.rsp_process()` requires multiple full breath cycles and fails on short 10s windows. Replaced with `scipy.signal.find_peaks()` (distance ≥ 2s between peaks) + RMS amplitude fallback when <2 peaks detected. Robust but less rigorous than a full RSP pipeline on longer windows.
 - **Ablation statistical power.** 5 seeds × 20k timesteps is a first-pass configuration. Re-run with `--seeds 0 1 2 3 4 5 6 7 8 9 --timesteps 75000` for publication-strength claims.
+- **Music quality is limited by model size and training scale.** The Transformer has ~3.3M parameters and was trained on 295 MIDI files for 60 epochs on CPU. Models of this scale produce structurally coherent but musically rough output — the primary goal of this project is validating the closed-loop physiological conditioning pipeline, not producing studio-quality music.
 
 ### Dataset limitations & future work
 
@@ -129,128 +131,13 @@ All 15 trials converged to `mean_episode_reward = 2.333` regardless of hyperpara
 
 ---
 
-## Collaborator Setup & Requirements
-
-**1. Local Environment & Dependencies**
-Model checkpoints and datasets are intentionally excluded from version control to save space. To set up your local environment:
-* Pull the latest changes from the `main` branch.
-* Install required libraries: `pip install -r requirements.txt`
-* The physiological and RL pipeline additionally requires: `pip install neurokit2 gymnasium stable-baselines3 optuna psutil`
-
-**2. Downloading the Datasets**
-You must download the datasets locally and place them in the project root.
-
-*   **WESAD Dataset (~3GB):**
-    1. Download from [here:](https://www.kaggle.com/datasets/orvile/wesad-wearable-stress-affect-detection-dataset).
-    2. Extract the contents into a folder named `wesad_data/` in the project root.
-    3. Verify the file path matches this format: `wesad_data/S2/S2.pkl`.
-
-*   **Classical MIDI Dataset:**
-    1. Download from [here:](https://www.kaggle.com/datasets/soumikrakshit/classical-music-midi).
-    2. Extract the MIDI files into a folder named `classical_dataset/` in the project root.
-
-**3. Generating the Train/Val Split**
-Do not manually split the MIDI files. Generate the local splits by running the preprocessing script:
-`python split_dataset.py --source_root classical_dataset --output_root data/classical_split --val_fraction 0.1`
-
-**4. Real-Time Windowing & Target Mapping**
-
-**Status: Completed**, then scaled beyond its original single-subject scope (see Section 6 below for the multi-subject version). Original implementation notes, preserved for reference:
-
-- Implemented `get_windows_for_condition()`: slices raw signal into consecutive 10-second windows (7000 samples at 700Hz), filtered per condition label.
-- Extended feature extraction to cover Baseline (1), Stress (2), and Meditation (4), not just Stress.
-- Implemented `calculate_music_targets(hrv, eda)`: rule-based mapping using HRV_SDNN < 50ms and EDA > 2.0 microsiemens as high-arousal thresholds, producing lower target tempo/complexity under high stress (safety-first: calm rather than excite). Thresholds are a first-pass baseline, not clinically validated.
-- Fixed an HRV computation issue: switched from `nk.hrv()` (all HRV domains) to `nk.hrv_time()` (time-domain only), since the full computation failed on most 10s windows (especially Meditation, where low variability broke the frequency-domain calculations). This raised valid-window coverage from 16% to 100%.
-- Output: `S2_physiological_timeline.csv`, 251 rows (114 Baseline / 61 Stress / 76 Meditation), columns: `Timestamp, Condition_Label, HRV_SDNN, Mean_EDA, Target_Tempo, Target_Complexity`.
-- Sanity check: mean HRV_SDNN is lowest under Stress (49.1ms) and highest under Meditation (59.3ms), consistent with expected physiology.
-
-**5. MIDI Tempo/Complexity Labeling & Condition-Token Training**
-
-**Status: Completed.** Bridges the classical MIDI dataset and the physiological pipeline by giving the Transformer a vocabulary of style-request tokens it can be conditioned on.
-
-- `label_midi_features.py` scans `data/classical_split` (or any directory recursively), computing per-file average tempo (`pretty_midi.estimate_tempo()`) and note density (onsets/second, drum tracks excluded). Values are quantized via a **median split across the scanned dataset** into `TEMPO_SLOW`/`TEMPO_FAST` and `COMPLEXITY_LOW`/`COMPLEXITY_HIGH`, written to `midi_labels.csv` alongside the raw continuous values.
-- `shared/vocabulary.py` gained 4 new token ids (451-454) for these bins, in a range distinct from the pre-existing per-event tempo bins.
-- `developer_a/dataset.py` optionally prepends the matching tempo+complexity token pair to **every training window** — the crop window is shrunk by 2 tokens so the condition tokens land at position 0/1 regardless of where a random crop lands in a long piece.
-- `developer_a/train.py` gained a `--labels_csv` flag to enable this; omitting it trains the original unconditioned baseline unchanged.
-- `developer_a/model.py` required **no changes** — condition tokens are embedded exactly like any other vocabulary token.
-
-To reproduce:
-```bash
-python label_midi_features.py --data_root data/classical_split --output midi_labels.csv
-python -m developer_a.train --data_root data/classical_split --labels_csv midi_labels.csv
-```
-
-**6. Safe RL Controller & Physiological Pipeline (Full Multi-Subject)**
-
-**Status: Fully completed**, including 3D observation space (HRV + EDA + Respiration).
-
-- `extract_features.py` — scaled across S2–S17 (S12 excluded), extracts HRV (SDNN via `nk.hrv_time()`), EDA (tonic mean via `nk.eda_process()`), and Respiration rate (breaths/min via `scipy.signal.find_peaks()`, RMS fallback). Output: `wesad_physiological_timeline.csv`, 3,924 rows, 100% valid.
-- `parse_questionnaire.py` — extracts PANAS, STAI, DIM, SSSQ from each subject's `_quest.csv`. Output: `wesad_questionnaire_summary.csv`, 105 rows.
-- `rl_env.py` — `PatientPhysiologyEnv` with 3D normalized observation `(HRV_SDNN, Mean_EDA, Mean_RSP_Rate)`. Safety penalty configurable via constructor (`safety_penalty` parameter) for ablation. RESP added to observation only — safety/reward logic still uses HRV/EDA (documented decision; see module docstring).
-- `train_rl.py` — trains PPO on `PatientPhysiologyEnv` (DummyVecEnv + Monitor), 75,000 timesteps, saving to `checkpoints/rl_controller.zip`.
-- `closed_loop_generate.py` — loads subject timeline + RL agent + conditioned Transformer; steps through timeline; converts each action to `[tempo_token, complexity_token]`; generates MIDI per step into `closed_loop_output/`; logs to `manifest.csv`.
-
-To reproduce:
-```bash
-python extract_features.py
-python parse_questionnaire.py
-python train_rl.py --csv_path wesad_physiological_timeline.csv --timesteps 75000
-python closed_loop_generate.py --subject S2 --physio_csv wesad_physiological_timeline.csv \
-    --rl_checkpoint checkpoints/rl_controller.zip \
-    --music_checkpoint checkpoints/checkpoint_epoch020.pt \
-    --output_dir closed_loop_output
-```
-
-**7. Phase 3 — 5-Arm Benchmark**
-
-**Status: Completed.** `benchmark_arms.py` implements all five experimental conditions on a per-step basis for a given subject's physiological timeline.
-
-- **Arm 1 (Silence):** no music generated; serves as the no-intervention baseline.
-- **Arm 2 (Fixed Music):** one pre-generated MIDI file looped for every step; no adaptation.
-- **Arm 3 (Therapist-Selected, simulated):** `baseline_song_01.mid` used as stand-in for a clinician's manual selection. In a real RCT this would be a human choice; here it is a structural placeholder.
-- **Arm 4 (Non-Adaptive AI):** unconditioned Transformer generates a new MIDI snippet per step, ignoring physiological state.
-- **Arm 5 (Closed-Loop Adaptive AI):** Safe RL agent selects condition tokens based on current physiological state; conditioned Transformer generates matching MIDI per step.
-
-To reproduce:
-```bash
-python benchmark_arms.py --subject S2 \
-    --physio_csv wesad_physiological_timeline.csv \
-    --rl_checkpoint checkpoints/rl_controller.zip \
-    --music_checkpoint checkpoints/checkpoint_epoch020.pt \
-    --therapist_midi generated_songs_classical/baseline_song_01.mid \
-    --output_dir benchmark_output --arms 1 2 3 4 5
-```
-
-**8. Phase 4 — Evaluation Suite**
-
-**Status: Completed.**
-
-- `run_experiments.py` — Safe vs Unsafe ablation, 5 seeds × 2 conditions × 20k timesteps. Mann-Whitney U + 95% bootstrap CI. Output: `experiment_results.csv`, `experiment_results_summary.csv`.
-- `optimize_hpo.py` — Optuna HPO over PPO hyperparameters, 15 trials. Output: `hpo_results.csv`.
-- `robustness_test.py` — fault tolerance under sensor noise + packet dropout (hold-last-known-good). Updated to 3D observation.
-- `profile_system.py` — RL latency, music generation latency, throughput, memory (50 measured steps + 5 warmup). Updated to 3D synthetic observation.
-- `midi_metrics.py` — note density, rhythm regularity (IOI coefficient of variation), 4-gram repetition rate, pitch entropy. Run on any MIDI file or directory.
-
-To reproduce:
-```bash
-python run_experiments.py --csv_path wesad_physiological_timeline.csv --seeds 0 1 2 3 4 --timesteps 20000
-python optimize_hpo.py --csv_path wesad_physiological_timeline.csv --n_trials 15 --timesteps_per_trial 15000
-python robustness_test.py --subject S2 --csv_path wesad_physiological_timeline.csv \
-    --rl_checkpoint checkpoints/rl_controller.zip
-python profile_system.py --music_checkpoint checkpoints/checkpoint_epoch020.pt
-python midi_metrics.py generated_songs_classical/ --output midi_metrics_classical.csv
-python midi_metrics.py benchmark_output/arm5/ --output midi_metrics_closedloop.csv
-```
-
----
-
 ## Project Completion Roadmap & Technical Requirements
 
 The following phases outline the deliverables required for the final research prototype and evaluation suite:
 
 ### Phase 1: Conditioning & Feature Ingestion — Status: Completed
-* **Multimodal Integration:** HRV, EDA, and Respiration extracted from WESAD chest sensors (10s windows, 700Hz) and ingested alongside tokenized MIDI sequences. Respiration integrated into the RL observation space (3D state vector) as of Task 4 — not as a hard-coded conditioning rule, but as a learnable signal available to the PPO policy. See "Dataset limitations & future work" for signals not yet integrated (EEG, movement, rehabilitation-task performance).
-* **Conditioning Mechanism:** Implemented as prepended discrete condition tokens (Section 5 above) rather than concatenated embeddings or cross-attention — chosen for simplicity and because it required zero architecture changes to the existing Transformer.
+* **Multimodal Integration:** HRV, EDA, and Respiration extracted from WESAD chest sensors (10s windows, 700Hz) and ingested alongside tokenized MIDI sequences. Respiration integrated into the RL observation space (3D state vector) — not as a hard-coded conditioning rule, but as a learnable signal available to the PPO policy. See "Dataset limitations & future work" for signals not yet integrated (EEG, movement, rehabilitation-task performance).
+* **Conditioning Mechanism:** Implemented as prepended discrete condition tokens (Section 5 below) rather than concatenated embeddings or cross-attention — chosen for simplicity and because it required zero architecture changes to the existing Transformer.
 
 ### Phase 2: Safe Reinforcement Learning Controller — Status: Completed
 * **Environment Modeling:** Done — `rl_env.py`, state = normalized (HRV_SDNN, Mean_EDA, Mean_RSP_Rate) [3D], action = a 4-way discrete tempo/complexity choice. See "Known open items" regarding the gap between this and the originally-envisioned finer-grained lever control.
@@ -324,11 +211,12 @@ rl_env.py                            # PatientPhysiologyEnv -- 3D observation (H
 train_rl.py                          # PPO training loop (stable-baselines3) for the Safe RL controller.
 closed_loop_generate.py              # End-to-end integration: RL agent + conditioned Transformer -> MIDI per timestep + manifest.csv.
 benchmark_arms.py                    # 5-arm benchmark comparison (Silence / Fixed / Therapist / NonAdaptive / ClosedLoop).
+concatenate_midi.py                  # Stitches per-step MIDI snippets into a single continuous file for listening/demo.
 midi_metrics.py                      # Post-hoc MIDI quality metrics: note density, rhythm regularity, repetition rate, pitch entropy.
 run_experiments.py                   # Multi-seed Safe vs Unsafe ablation + Mann-Whitney U + 95% Bootstrap CI.
 optimize_hpo.py                      # Optuna HPO for PPO hyperparameters.
 robustness_test.py                   # Fault tolerance under sensor noise and packet dropout (3D observation).
-profile_system.py                    # Latency / memory / throughput profiling (3D synthetic observation).
+profile_system.py                    # Latency / memory / throughput profiling.
 kaggle_analysis.xlsx                 # 10 Kaggle notebook comparative analysis.
 midi_labels.csv                      # label_midi_features.py output: per-file tempo/complexity bins.
 wesad_physiological_timeline.csv     # Aggregated multi-subject physiological timeline (3,924 rows, HRV/EDA/RESP).
@@ -341,13 +229,16 @@ midi_metrics_classical.csv           # MIDI metrics for classical baseline songs
 midi_metrics_baseline.csv            # MIDI metrics for multi-genre baseline songs.
 midi_metrics_closedloop.csv          # MIDI metrics for closed-loop Arm 5 output (251 files).
 checkpoints/
-  checkpoint_epoch020.pt             # Music Transformer checkpoint (20 epochs on classical dataset).
+  checkpoint_best.pt                 # Best music Transformer checkpoint (60-epoch training run, best at epoch 59, val_loss 4.49; local only, gitignored).
   rl_controller.zip                  # Trained PPO Safe RL controller (3D observation, 75k timesteps).
-generated_songs/                     # Initial multi-genre generated MIDI outputs.
-generated_songs_classical/           # Classical baseline generated MIDI outputs.
-generated_songs_conditioned/         # Condition-token-conditioned generated MIDI outputs.
-closed_loop_output/                  # Per-timestep MIDI generated by closed_loop_generate.py, plus manifest.csv.
+generated_songs/                     # Initial multi-genre generated MIDI outputs (local only, gitignored).
+generated_songs_classical/           # Classical baseline generated MIDI outputs (local only, gitignored).
+generated_songs_conditioned/         # Condition-token-conditioned generated MIDI outputs (local only, gitignored).
+generated_songs_v2/                  # Improved generation: 60-epoch model, 1024 tokens/snippet (local only, gitignored).
+closed_loop_output/                  # Per-timestep MIDI generated by closed_loop_generate.py, plus manifest.csv (local only, gitignored).
 benchmark_output/                    # 5-arm benchmark results: per-step CSV, summary CSV, arm4/ and arm5/ MIDI.
+benchmark_output_v2/                 # 5-arm benchmark results using improved model and 512-token snippets.
+concatenated_arm5_v2.mid             # Full 66-min adaptive music timeline for Subject S2, v2 model (local only, gitignored).
 ```
 
 ## 3. Parallelization Contract
@@ -367,31 +258,34 @@ python label_midi_features.py --data_root data/classical_split --output midi_lab
 python extract_features.py
 python parse_questionnaire.py
 
-# 2. Training
-python -m developer_a.train --data_root data/classical_split --labels_csv midi_labels.csv
+# 2. Training (60 epochs, ~41 min on CPU)
+python -m developer_a.train --data_root data/classical_split --labels_csv midi_labels.csv --num_epochs 60
 python train_rl.py --csv_path wesad_physiological_timeline.csv --timesteps 75000
 
-# 3. Generation
-python -m developer_b.generate_song --checkpoint checkpoints/checkpoint_epoch020.pt \
-    --output_dir generated_songs_classical --num_songs 5
+# 3. Generation (v2: improved model, longer snippets)
+python -m developer_b.generate_song --checkpoint checkpoints/checkpoint_best.pt \
+    --output_dir generated_songs_v2 --num_songs 5 --max_new_tokens 1024
 python closed_loop_generate.py --subject S2 \
     --physio_csv wesad_physiological_timeline.csv \
     --rl_checkpoint checkpoints/rl_controller.zip \
-    --music_checkpoint checkpoints/checkpoint_epoch020.pt \
+    --music_checkpoint checkpoints/checkpoint_best.pt \
     --output_dir closed_loop_output
 
 # 4. Benchmarking
 python benchmark_arms.py --subject S2 \
     --physio_csv wesad_physiological_timeline.csv \
     --rl_checkpoint checkpoints/rl_controller.zip \
-    --music_checkpoint checkpoints/checkpoint_epoch020.pt \
+    --music_checkpoint checkpoints/checkpoint_best.pt \
     --therapist_midi generated_songs_classical/baseline_song_01.mid \
-    --output_dir benchmark_output --arms 1 2 3 4 5
+    --output_dir benchmark_output_v2 --arms 1 2 3 4 5
 
-# 5. Evaluation
-python midi_metrics.py generated_songs_classical/ --output midi_metrics_classical.csv
-python midi_metrics.py generated_songs/ --output midi_metrics_baseline.csv
-python midi_metrics.py benchmark_output/arm5/ --output midi_metrics_closedloop.csv
+# 5. MIDI concatenation (for listening/demo)
+python concatenate_midi.py --input_dir benchmark_output_v2/arm5 \
+    --output concatenated_arm5_v2.mid
+
+# 6. Evaluation
+python midi_metrics.py generated_songs_v2/ --output midi_metrics_v2.csv
+python midi_metrics.py benchmark_output_v2/arm5/ --output midi_metrics_closedloop_v2.csv
 python run_experiments.py --csv_path wesad_physiological_timeline.csv \
     --seeds 0 1 2 3 4 --timesteps 20000
 python optimize_hpo.py --csv_path wesad_physiological_timeline.csv \
@@ -399,5 +293,86 @@ python optimize_hpo.py --csv_path wesad_physiological_timeline.csv \
 python robustness_test.py --subject S2 \
     --csv_path wesad_physiological_timeline.csv \
     --rl_checkpoint checkpoints/rl_controller.zip
-python profile_system.py --music_checkpoint checkpoints/checkpoint_epoch020.pt
+python profile_system.py --music_checkpoint checkpoints/checkpoint_best.pt
+```
+
+## 5. MIDI Tempo/Complexity Labeling & Condition-Token Training
+
+**Status: Completed.** Bridges the classical MIDI dataset and the physiological pipeline by giving the Transformer a vocabulary of style-request tokens it can be conditioned on.
+
+- `label_midi_features.py` scans `data/classical_split` (or any directory recursively), computing per-file average tempo (`pretty_midi.estimate_tempo()`) and note density (onsets/second, drum tracks excluded). Values are quantized via a **median split across the scanned dataset** into `TEMPO_SLOW`/`TEMPO_FAST` and `COMPLEXITY_LOW`/`COMPLEXITY_HIGH`, written to `midi_labels.csv` alongside the raw continuous values.
+- `shared/vocabulary.py` gained 4 new token ids (451-454) for these bins, in a range distinct from the pre-existing per-event tempo bins.
+- `developer_a/dataset.py` optionally prepends the matching tempo+complexity token pair to **every training window** — the crop window is shrunk by 2 tokens so the condition tokens land at position 0/1 regardless of where a random crop lands in a long piece.
+- `developer_a/train.py` gained a `--labels_csv` flag to enable this; omitting it trains the original unconditioned baseline unchanged.
+- `developer_a/model.py` required **no changes** — condition tokens are embedded exactly like any other vocabulary token.
+
+To reproduce:
+```bash
+python label_midi_features.py --data_root data/classical_split --output midi_labels.csv
+python -m developer_a.train --data_root data/classical_split --labels_csv midi_labels.csv --num_epochs 60
+```
+
+## 6. Safe RL Controller & Physiological Pipeline (Full Multi-Subject)
+
+**Status: Fully completed**, including 3D observation space (HRV + EDA + Respiration).
+
+- `extract_features.py` — scaled across S2–S17 (S12 excluded), extracts HRV (SDNN via `nk.hrv_time()`), EDA (tonic mean via `nk.eda_process()`), and Respiration rate (breaths/min via `scipy.signal.find_peaks()`, RMS fallback). Output: `wesad_physiological_timeline.csv`, 3,924 rows, 100% valid.
+- `parse_questionnaire.py` — extracts PANAS, STAI, DIM, SSSQ from each subject's `_quest.csv`. Output: `wesad_questionnaire_summary.csv`, 105 rows.
+- `rl_env.py` — `PatientPhysiologyEnv` with 3D normalized observation `(HRV_SDNN, Mean_EDA, Mean_RSP_Rate)`. Safety penalty configurable via constructor (`safety_penalty` parameter) for ablation. RESP added to observation only — safety/reward logic still uses HRV/EDA (documented decision; see module docstring).
+- `train_rl.py` — trains PPO on `PatientPhysiologyEnv` (DummyVecEnv + Monitor), 75,000 timesteps, saving to `checkpoints/rl_controller.zip`.
+- `closed_loop_generate.py` — loads subject timeline + RL agent + conditioned Transformer; steps through timeline; converts each action to `[tempo_token, complexity_token]`; generates MIDI per step into `closed_loop_output/`; logs to `manifest.csv`.
+
+To reproduce:
+```bash
+python extract_features.py
+python parse_questionnaire.py
+python train_rl.py --csv_path wesad_physiological_timeline.csv --timesteps 75000
+python closed_loop_generate.py --subject S2 \
+    --physio_csv wesad_physiological_timeline.csv \
+    --rl_checkpoint checkpoints/rl_controller.zip \
+    --music_checkpoint checkpoints/checkpoint_best.pt \
+    --output_dir closed_loop_output
+```
+
+## 7. Phase 3 — 5-Arm Benchmark
+
+**Status: Completed.** `benchmark_arms.py` implements all five experimental conditions on a per-step basis for a given subject's physiological timeline.
+
+- **Arm 1 (Silence):** no music generated; serves as the no-intervention baseline.
+- **Arm 2 (Fixed Music):** one pre-generated MIDI file looped for every step; no adaptation.
+- **Arm 3 (Therapist-Selected, simulated):** `baseline_song_01.mid` used as stand-in for a clinician's manual selection. In a real RCT this would be a human choice; here it is a structural placeholder.
+- **Arm 4 (Non-Adaptive AI):** unconditioned Transformer generates a new MIDI snippet per step, ignoring physiological state.
+- **Arm 5 (Closed-Loop Adaptive AI):** Safe RL agent selects condition tokens based on current physiological state; conditioned Transformer generates matching MIDI per step.
+
+To reproduce:
+```bash
+python benchmark_arms.py --subject S2 \
+    --physio_csv wesad_physiological_timeline.csv \
+    --rl_checkpoint checkpoints/rl_controller.zip \
+    --music_checkpoint checkpoints/checkpoint_best.pt \
+    --therapist_midi generated_songs_classical/baseline_song_01.mid \
+    --output_dir benchmark_output_v2 --arms 1 2 3 4 5
+```
+
+## 8. Phase 4 — Evaluation Suite
+
+**Status: Completed.**
+
+- `run_experiments.py` — Safe vs Unsafe ablation, 5 seeds × 2 conditions × 20k timesteps. Mann-Whitney U + 95% bootstrap CI. Output: `experiment_results.csv`, `experiment_results_summary.csv`.
+- `optimize_hpo.py` — Optuna HPO over PPO hyperparameters, 15 trials. Output: `hpo_results.csv`.
+- `robustness_test.py` — fault tolerance under sensor noise (Gaussian, 3σ) + packet dropout (hold-last-known-good). Updated to 3D observation.
+- `profile_system.py` — RL latency, music generation latency, throughput, memory (50 measured steps + 5 warmup).
+- `midi_metrics.py` — note density, rhythm regularity (IOI coefficient of variation), 4-gram repetition rate, pitch entropy. Run on any MIDI file or directory.
+- `concatenate_midi.py` — stitches per-step MIDI snippets from any directory into a single continuous file for listening and demo purposes.
+
+To reproduce:
+```bash
+python run_experiments.py --csv_path wesad_physiological_timeline.csv --seeds 0 1 2 3 4 --timesteps 20000
+python optimize_hpo.py --csv_path wesad_physiological_timeline.csv --n_trials 15 --timesteps_per_trial 15000
+python robustness_test.py --subject S2 --csv_path wesad_physiological_timeline.csv \
+    --rl_checkpoint checkpoints/rl_controller.zip
+python profile_system.py --music_checkpoint checkpoints/checkpoint_best.pt
+python midi_metrics.py generated_songs_v2/ --output midi_metrics_v2.csv
+python midi_metrics.py benchmark_output_v2/arm5/ --output midi_metrics_closedloop_v2.csv
+python concatenate_midi.py --input_dir benchmark_output_v2/arm5 --output concatenated_arm5_v2.mid
 ```

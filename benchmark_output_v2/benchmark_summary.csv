@@ -1,0 +1,2 @@
+Arm,ArmName,TotalSteps,HighStressSteps,DangerousActionRate,CalmingActionRate,DangerousDuringStressRate
+5,ClosedLoop_Adaptive_AI,251,26,0.0796812749003984,0.9083665338645418,0.0
